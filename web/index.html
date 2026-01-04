@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Green AI - Knowledge Crystallization</title>
+    <link rel="stylesheet" href="./assets/styles/index.css" />
+  </head>
+  <body>
+    <div class="dashboard">
+      <div class="glow-effect"></div>
+
+      <header>
+        <div class="logo">GREEN AI <span class="version">v1.0</span></div>
+        <div class="engine-status">
+          CRYSTAL ENGINE: <span id="engine-state">READY</span>
+        </div>
+      </header>
+
+      <section class="stats-container">
+        <div class="stat-card">
+          <label>TỔNG SỐ ĐỈNH (VERTICES)</label>
+          <div id="v-count" class="number">0</div>
+          <div class="sub-label">Đại diện cho các từ vựng độc bản</div>
+        </div>
+        <div class="stat-card">
+          <label>LIÊN KẾT TINH THỂ (EDGES)</label>
+          <div id="e-count" class="number">0</div>
+          <div class="sub-label">Mối quan hệ hình học giữa các từ</div>
+        </div>
+      </section>
+
+      <section class="progress-area">
+        <div class="info">
+          <span id="current-file">Chờ lệnh bắt đầu...</span>
+          <span id="percentage">0%</span>
+        </div>
+        <div class="bar-bg">
+          <div id="progress-fill" class="bar-fill"></div>
+        </div>
+      </section>
+
+      <div class="console-wrapper">
+        <div id="console-log" class="console">
+          <div>> System initialized. Awaiting Data input...</div>
+        </div>
+      </div>
+
+      <button id="start-btn" onclick="triggerTraining()">
+        KHỞI CHẠY KẾT TINH
+      </button>
+    </div>
+
+    <script type="text/javascript" src="/eel.js"></script>
+    <script>
+      function triggerTraining() {
+        const btn = document.getElementById("start-btn");
+        btn.disabled = true;
+        btn.classList.add("running");
+        btn.innerText = "ĐANG XỬ LÝ DỮ LIỆU...";
+        document.getElementById("engine-state").innerText = "PROCESSING";
+
+        // Gọi hàm từ index.py
+        eel.request_training();
+      }
+
+      // Hàm hứng dữ liệu từ Python gửi về
+      eel.expose(update_ui);
+      function update_ui(msg, percent, v_count, e_count) {
+        document.getElementById("current-file").innerText = msg;
+        document.getElementById("percentage").innerText = percent + "%";
+        document.getElementById("progress-fill").style.width = percent + "%";
+
+        // Hiệu ứng nhảy số
+        document.getElementById("v-count").innerText = v_count.toLocaleString();
+        document.getElementById("e-count").innerText = e_count.toLocaleString();
+
+        // Ghi log vào console ảo
+        const consoleBox = document.getElementById("console-log");
+        const newLog = document.createElement("div");
+        newLog.innerText = `> ${msg}`;
+        consoleBox.appendChild(newLog);
+        consoleBox.scrollTop = consoleBox.scrollHeight;
+
+        if (percent === 100) {
+          document.getElementById("engine-state").innerText = "COMPLETED";
+          document.getElementById("start-btn").innerText =
+            "XUẤT FILE 3D THÀNH CÔNG";
+        }
+      }
+    </script>
+  </body>
+</html>
