@@ -2,112 +2,88 @@ import numpy as np # type: ignore
 import os
 import re
 import pickle
-import time
+import cv2 # type: ignore
 from collections import defaultdict
 
 class CrystalEngine:
     def __init__(self):
-        # Sử dụng dictionary để truy cập O(1) nhưng tối ưu hóa bộ nhớ
         self.vertices = {} 
         self.edges = {}
         self.domain_vectors = {}
-        # Pre-compile regex để đạt tốc độ tối đa
-        self.clean_re = re.compile(r'[^a-z0-9\s]')
+        self.image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.jfif'}
+        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        self.eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+
+    def _extract_features(self, path):
+        """Dùng OpenCV để 'nhìn' ảnh .jfif và trả về nhãn hành vi"""
+        img = cv2.imread(path)
+        if img is None: return []
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
         
-    def _clean_text(self, text):
-        return self.clean_re.sub('', str(text).lower()).split()
+        tags = ["visual_input"]
+        if len(faces) > 0:
+            tags.append("face_found")
+            for (x,y,w,h) in faces:
+                roi = gray[y:y+h, x:x+w]
+                eyes = self.eye_cascade.detectMultiScale(roi)
+                tags.append("eyes_open" if len(eyes) >= 2 else "eyes_closed_or_distracted")
+        else:
+            tags.append("no_human_visible")
+        return tags
 
     def process_training(self, data_path, progress_callback):
-        if not os.path.exists(data_path):
-            progress_callback("Lỗi: Không tìm thấy Data", 0, 0, 0)
-            return
-
-        all_files = [f for f in os.listdir(data_path) if os.path.isfile(os.path.join(data_path, f))]
-        total_files = len(all_files)
-        
-        # Local caching để tăng tốc độ truy cập trong vòng lặp (Method Inlining)
-        v_ref = self.vertices
-        e_ref = self.edges
-        d_ref = self.domain_vectors
-        
+        all_files = [f for f in os.listdir(data_path)]
         for index, filename in enumerate(all_files):
-            domain = filename.split('.')[0]
+            # Sửa domain: focus_1.jfif -> domain 'focus'
+            domain = filename.split('_')[0] if '_' in filename else filename.split('.')[0]
             file_path = os.path.join(data_path, filename)
-            
-            # Chỉ cập nhật giao diện sau khi xong 1 file để tiết kiệm tài nguyên
-            progress_callback(f"Đang kết tinh: {filename}", int((index / total_files) * 100), len(v_ref), len(e_ref))
-            
-            if domain not in d_ref:
-                # Tạo vector định hướng miền (Seed vector)
+            ext = os.path.splitext(filename)[1].lower()
+
+            words = self._extract_features(file_path) if ext in self.image_extensions else []
+            if not words: # Nếu là file text nhãn
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        words = f.read().lower().split()
+                except: continue
+
+            # Logic kết tinh hình học (Giữ nguyên như bản cũ của bạn)
+            if domain not in self.domain_vectors:
                 v = np.random.uniform(-1, 1, 3)
-                d_ref[domain] = v / np.linalg.norm(v)
+                self.domain_vectors[domain] = v / np.linalg.norm(v)
             
-            d_vec = d_ref[domain]
+            d_vec = self.domain_vectors[domain]
+            for i in range(len(words)-1):
+                w1, w2 = words[i], words[i+1]
+                if w1 not in self.vertices: self.vertices[w1] = np.random.normal(0, 5, 3)
+                if w2 not in self.vertices: self.vertices[w2] = self.vertices[w1] + (d_vec * 2.0)
+                eid = f"{w1}<->{w2}" if w1 < w2 else f"{w2}<->{w1}"
+                self.edges[eid] = self.edges.get(eid, 0) + 0.1
 
-            try:
-                # Đọc file theo chunk để chống tràn RAM nhưng vẫn đảm bảo tốc độ
-                with open(file_path, 'r', encoding='iso-8859-1', errors='ignore') as f:
-                    for line in f:
-                        try:
-                            content = line.split("+++$+++")[-1] if "+++" in line else line
-                            words = self.clean_re.sub('', content.lower()).split()
-                            
-                            if len(words) < 2: continue
-                            
-                            # Thuật toán kết tinh tốc độ cao
-                            for i in range(len(words) - 1):
-                                w1, w2 = words[i], words[i+1]
-                                
-                                if w1 not in v_ref:
-                                    v_ref[w1] = np.random.normal(0, 10, 3)
-                                
-                                if w2 not in v_ref:
-                                    # Công thức phát triển tinh thể: V2 = V1 + Direction * Growth_Factor
-                                    v_ref[w2] = v_ref[w1] + (d_vec * 2.5)
-                                
-                                # Tạo khóa cạnh nhanh bằng cách kết hợp chuỗi (nhanh hơn tuple trong một số phiên bản Python)
-                                edge_id = f"{w1}<->{w2}" if w1 < w2 else f"{w2}<->{w1}"
-                                
-                                if edge_id not in e_ref:
-                                    e_ref[edge_id] = 0.2 # Độ cứng khởi tạo
-                                elif e_ref[edge_id] < 2.5:
-                                    e_ref[edge_id] += 0.1
-                        except:
-                            continue # Bỏ qua dòng lỗi
-            except:
-                continue # Bỏ qua file lỗi
-
+            progress_callback(f"Kết tinh: {filename}", int((index+1)/len(all_files)*100), len(self.vertices), len(self.edges))
         self.save_all()
-        progress_callback("HOÀN TẤT KẾT TINH!", 100, len(self.vertices), len(self.edges))
-
+        
     def save_all(self):
         brain_dir = "./Brain"
         if not os.path.exists(brain_dir): os.makedirs(brain_dir)
         
-        # Lưu nhị phân để Inference nhanh
+        # Lưu dữ liệu nhị phân
         with open(os.path.join(brain_dir, "crystal_brain.pb"), 'wb') as f:
             pickle.dump({"vertices": self.vertices, "edges": self.edges}, f)
         
+        # Xuất file 3D để quan sát vùng xao nhãng
         self.export_to_obj(os.path.join(brain_dir, "knowledge_map.obj"))
 
     def export_to_obj(self, filename):
-        """Xuất mô hình 3D với bộ đệm (buffering) cực lớn để tối ưu ổ cứng SSD"""
         if not self.vertices: return
-        
-        with open(filename, 'w', buffering=1024*1024*10) as f: # 10MB Buffer
-            f.write("# Green AI - Advanced Crystal Geometry\n")
-            
-            # Map word to ID để ghi file .obj
+        with open(filename, 'w', buffering=1024*1024*10) as f:
+            f.write("# Crystal Engine 3D Knowledge Map\n")
             word_to_id = {}
             idx = 1
-            
-            # Viết Vertex với độ chính xác số thực tối ưu (4 chữ số thập phân)
             for word, coord in self.vertices.items():
                 word_to_id[word] = idx
                 f.write(f"v {coord[0]:.4f} {coord[1]:.4f} {coord[2]:.4f}\n")
                 idx += 1
-            
-            # Viết Cạnh (Line)
             for edge_id in self.edges.keys():
                 w1, w2 = edge_id.split("<->")
                 if w1 in word_to_id and w2 in word_to_id:

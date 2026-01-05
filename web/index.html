@@ -30,9 +30,23 @@
         </div>
       </section>
 
+      <section class="upload-section">
+        <label for="file-upload" class="custom-file-upload">
+          📁 CHỌN DỮ LIỆU (CSV, TXT, PDF)
+        </label>
+        <input
+          id="file-upload"
+          type="file"
+          multiple
+          onchange="handleFileSelect(this)"
+          style="display: none"
+        />
+        <div id="file-list" class="file-list">Chưa có tệp nào được chọn</div>
+      </section>
+
       <section class="progress-area">
         <div class="info">
-          <span id="current-file">Chờ lệnh bắt đầu...</span>
+          <span id="current-file">Sẵn sàng nạp dữ liệu...</span>
           <span id="percentage">0%</span>
         </div>
         <div class="bar-bg">
@@ -42,40 +56,85 @@
 
       <div class="console-wrapper">
         <div id="console-log" class="console">
-          <div>> System initialized. Awaiting Data input...</div>
+          <div>> System initialized. Please upload data to begin.</div>
         </div>
       </div>
 
-      <button id="start-btn" onclick="triggerTraining()">
+      <button id="start-btn" onclick="triggerTraining()" disabled>
         KHỞI CHẠY KẾT TINH
       </button>
     </div>
 
     <script type="text/javascript" src="/eel.js"></script>
     <script>
-      function triggerTraining() {
-        const btn = document.getElementById("start-btn");
-        btn.disabled = true;
-        btn.classList.add("running");
-        btn.innerText = "ĐANG XỬ LÝ DỮ LIỆU...";
-        document.getElementById("engine-state").innerText = "PROCESSING";
+      let selectedFiles = [];
 
-        // Gọi hàm từ index.py
-        eel.request_training();
+      function handleFileSelect(input) {
+        const list = document.getElementById("file-list");
+        const btn = document.getElementById("start-btn");
+        list.innerHTML = "";
+        selectedFiles = Array.from(input.files);
+
+        if (selectedFiles.length > 0) {
+          selectedFiles.forEach((f) => {
+            const item = document.createElement("div");
+            item.className = "file-item";
+            item.innerText = `📄 ${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
+            list.appendChild(item);
+          });
+          btn.disabled = false;
+          btn.innerText = "BẮT ĐẦU HUẤN LUYỆN";
+        }
       }
 
-      // Hàm hứng dữ liệu từ Python gửi về
+      // Thay đổi hàm triggerTraining để hỗ trợ cả văn bản và hình ảnh
+      // Tìm đoạn này trong index.html và thay thế:
+      async function triggerTraining() {
+        const btn = document.getElementById("start-btn");
+        btn.disabled = true;
+        document.getElementById("engine-state").innerText = "UPLOADING";
+
+        for (const file of selectedFiles) {
+          update_ui(`Đang nạp: ${file.name}...`, 0, 0, 0);
+
+          // Chuyển tất cả về Base64 (bao gồm cả .txt, .jfif, .jpg)
+          const base64Data = await readFileAsDataURL(file);
+
+          // Gửi về Python qua một hàm xử lý chung
+          const success = await eel.handle_universal_upload(
+            file.name,
+            base64Data
+          )();
+
+          if (!success) {
+            update_ui(`Lỗi tải tệp: ${file.name}`, 0, 0, 0);
+            btn.disabled = false;
+            return;
+          }
+        }
+
+        update_ui("Đã nạp xong toàn bộ. Bắt đầu kết tinh...", 0, 0, 0);
+        document.getElementById("engine-state").innerText = "PROCESSING";
+        eel.request_training()();
+      }
+
+      function readFileAsDataURL(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject("Lỗi đọc tệp");
+          reader.readAsDataURL(file);
+        });
+      }
+
       eel.expose(update_ui);
       function update_ui(msg, percent, v_count, e_count) {
         document.getElementById("current-file").innerText = msg;
         document.getElementById("percentage").innerText = percent + "%";
         document.getElementById("progress-fill").style.width = percent + "%";
-
-        // Hiệu ứng nhảy số
         document.getElementById("v-count").innerText = v_count.toLocaleString();
         document.getElementById("e-count").innerText = e_count.toLocaleString();
 
-        // Ghi log vào console ảo
         const consoleBox = document.getElementById("console-log");
         const newLog = document.createElement("div");
         newLog.innerText = `> ${msg}`;
@@ -84,8 +143,8 @@
 
         if (percent === 100) {
           document.getElementById("engine-state").innerText = "COMPLETED";
-          document.getElementById("start-btn").innerText =
-            "XUẤT FILE 3D THÀNH CÔNG";
+          document.getElementById("start-btn").innerText = "KẾT TINH HOÀN TẤT";
+          document.getElementById("start-btn").style.borderColor = "#00ff88";
         }
       }
     </script>
